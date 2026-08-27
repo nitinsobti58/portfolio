@@ -181,7 +181,9 @@ export function PortfolioMap({ className }: Props) {
         element.style.transform = `translate(${sx}px, ${sy}px) translateX(-50%)`;
         const onScreen =
           sx > -PILL_SLACK && sx < size.width + PILL_SLACK && sy > -PILL_SLACK && sy < size.height;
-        element.style.visibility = onScreen ? "" : "hidden";
+        // Hiding the focused pill would blur it to <body>; keep it (clipped) until focus moves on.
+        const keep = onScreen || element === document.activeElement;
+        element.style.visibility = keep ? "" : "hidden";
       }
       overlay.style.visibility = "visible";
       if (resetRef.current) resetRef.current.hidden = sameTransform(t, fit);
