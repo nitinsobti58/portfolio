@@ -14,7 +14,7 @@ Read `docs/portfolio-map-plan.md` in full before writing code. It is the spec: g
 
 ## Stack
 
-Next.js (App Router) + TypeScript, Tailwind CSS v4, shadcn/ui (Base UI, `base-nova` preset, lucide icons), Bun, `d3-force` + `d3-zoom` + `d3-selection` (individual modules only — never import `d3`), `motion`, `next-themes`, MDX via `@next/mdx`, ESLint 9, Vitest. Deploys to Vercel at https://nitinsobti.com.
+Next.js (App Router) + TypeScript, Tailwind CSS v4, shadcn/ui (Base UI, `base-nova` preset, lucide icons), Bun, `d3-force` + `d3-zoom` + `d3-selection` + `d3-transition` (individual modules only — never import `d3`), `motion`, `next-themes`, MDX via `@next/mdx`, ESLint 9, Vitest. Deploys to Vercel at https://nitinsobti.com.
 
 ## Layout
 

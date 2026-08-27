@@ -6,7 +6,7 @@ Personal portfolio. The homepage is an interactive force-directed map rendered i
 
 - [Next.js](https://nextjs.org/) (App Router) + TypeScript
 - [Tailwind CSS v4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/)
-- [d3-force](https://d3js.org/d3-force) + [d3-zoom](https://d3js.org/d3-zoom) for the map simulation and navigation
+- [d3-force](https://d3js.org/d3-force) + [d3-zoom](https://d3js.org/d3-zoom) + [d3-transition](https://d3js.org/d3-transition) for the map simulation and navigation
 - MDX case studies, [Vitest](https://vitest.dev/), ESLint 9
 - [Bun](https://bun.sh/) runtime, deployed on [Vercel](https://vercel.com/)
 

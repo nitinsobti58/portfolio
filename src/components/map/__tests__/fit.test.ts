@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { boundsOf, fitTransform, toScreen, toWorld } from "../fit";
+import {
+  boundsOf,
+  clusterOf,
+  constrainTransform,
+  drawnRadius,
+  fitTransform,
+  FOCUS_MAX_SCALE,
+  focusTransform,
+  sameTransform,
+  toScreen,
+  toWorld,
+} from "../fit";
+import { HALO_FACTOR } from "../render";
 import type { SimNode } from "../types";
 
 const node = (id: string, x: number, y: number, radius = 10): SimNode => ({
@@ -16,6 +28,14 @@ describe("fit", () => {
   it("computes bounds including node radii", () => {
     const b = boundsOf([node("a", 0, 0, 10), node("b", 100, 50, 20)]);
     expect(b).toEqual({ minX: -10, minY: -10, maxX: 120, maxY: 70 });
+  });
+
+  it("includes the halo of self and area nodes in the bounds", () => {
+    const area: SimNode = { id: "area:web", type: "area", area: "web", label: "Web", radius: 26, x: 0, y: 0 };
+    const b = boundsOf([area]);
+    expect(b.maxY).toBeCloseTo(26 * HALO_FACTOR);
+    expect(drawnRadius(area)).toBeCloseTo(26 * HALO_FACTOR);
+    expect(drawnRadius(node("p", 0, 0, 12))).toBe(12);
   });
 
   it("centers the bounds in the viewport", () => {
@@ -47,5 +67,101 @@ describe("fit", () => {
     const t = fitTransform([], { width: 400, height: 300 });
     expect(Number.isFinite(t.k)).toBe(true);
     expect(Number.isFinite(t.x)).toBe(true);
+  });
+});
+
+describe("focusTransform", () => {
+  const self: SimNode = { id: "self", type: "self", label: "me", radius: 34, x: 0, y: 0 };
+  const area: SimNode = { id: "area:web", type: "area", area: "web", label: "Web", radius: 26, x: 200, y: 0 };
+  const p1: SimNode = { ...node("project:a", 260, -40, 12), area: "web" };
+  const p2: SimNode = { ...node("project:b", 270, 50, 12), area: "web" };
+  const other: SimNode = { id: "area:data", type: "area", area: "data", label: "Data", radius: 26, x: -200, y: 0 };
+  const nodes = [self, area, p1, p2, other];
+  const size = { width: 1000, height: 600 };
+
+  it("selects the area node and its projects, never the center", () => {
+    expect(clusterOf(nodes, "web").map((n) => n.id)).toEqual(["area:web", "project:a", "project:b"]);
+    expect(clusterOf(nodes, "trading")).toEqual([]);
+  });
+
+  it("centers the cluster in the viewport", () => {
+    const t = focusTransform(nodes, "web", size, 96);
+    const b = boundsOf(clusterOf(nodes, "web"));
+    const center = toScreen(t, (b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+    expect(center.x).toBeCloseTo(500);
+    expect(center.y).toBeCloseTo(300);
+  });
+
+  it("keeps every cluster node inside the padding when the viewport is the limit", () => {
+    // Small enough that the padding, not the scale cap, decides k.
+    const small = { width: 400, height: 300 };
+    const t = focusTransform(nodes, "web", small, 96);
+    expect(t.k).toBeLessThan(FOCUS_MAX_SCALE);
+    const b = boundsOf(clusterOf(nodes, "web"));
+    const top = toScreen(t, b.minX, b.minY);
+    const bottom = toScreen(t, b.maxX, b.maxY);
+    expect(top.x).toBeGreaterThanOrEqual(96 - 1e-6);
+    expect(top.y).toBeGreaterThanOrEqual(96 - 1e-6);
+    expect(bottom.x).toBeLessThanOrEqual(small.width - 96 + 1e-6);
+    expect(bottom.y).toBeLessThanOrEqual(small.height - 96 + 1e-6);
+    // The binding axis touches the padding exactly.
+    expect(Math.min(top.y - 96, small.height - 96 - bottom.y)).toBeCloseTo(0);
+  });
+
+  it("never zooms past the focus cap", () => {
+    const t = focusTransform(nodes, "web", { width: 4000, height: 4000 });
+    expect(t.k).toBe(FOCUS_MAX_SCALE);
+  });
+
+  it("falls back to the whole graph for an area without nodes", () => {
+    expect(focusTransform(nodes, "trading", size)).toEqual(fitTransform(nodes, size, 96, FOCUS_MAX_SCALE));
+  });
+});
+
+describe("constrainTransform", () => {
+  const bounds = { minX: -300, minY: -200, maxX: 300, maxY: 200 };
+  const size = { width: 1000, height: 600 };
+  const margin = 80;
+
+  it("returns the same object when the graph is comfortably in view", () => {
+    const t = { k: 1, x: 500, y: 300 };
+    expect(constrainTransform(t, bounds, size, margin)).toBe(t);
+  });
+
+  it("stops the graph from leaving the viewport on every side", () => {
+    // Pushed far right: the graph's left edge must stay ≤ width - margin.
+    const right = constrainTransform({ k: 1, x: 5000, y: 300 }, bounds, size, margin);
+    expect(toScreen(right, bounds.minX, 0).x).toBeCloseTo(size.width - margin);
+    // Pushed far left: the graph's right edge must stay ≥ margin.
+    const left = constrainTransform({ k: 1, x: -5000, y: 300 }, bounds, size, margin);
+    expect(toScreen(left, bounds.maxX, 0).x).toBeCloseTo(margin);
+    const down = constrainTransform({ k: 1, x: 500, y: 5000 }, bounds, size, margin);
+    expect(toScreen(down, 0, bounds.minY).y).toBeCloseTo(size.height - margin);
+    const up = constrainTransform({ k: 1, x: 500, y: -5000 }, bounds, size, margin);
+    expect(toScreen(up, 0, bounds.maxY).y).toBeCloseTo(margin);
+  });
+
+  it("is scale-aware: a zoomed-in graph can still be panned across its full extent", () => {
+    const k = 4;
+    // Graph is 2400 px wide at k = 4; both ends must be reachable.
+    const showLeft = constrainTransform({ k, x: margin - bounds.minX * k, y: 300 }, bounds, size, margin);
+    expect(toScreen(showLeft, bounds.minX, 0).x).toBeCloseTo(margin);
+    const showRight = constrainTransform({ k, x: size.width - margin - bounds.maxX * k, y: 300 }, bounds, size, margin);
+    expect(toScreen(showRight, bounds.maxX, 0).x).toBeCloseTo(size.width - margin);
+  });
+
+  it("settles in the middle when the range inverts (tiny viewport, tiny graph)", () => {
+    // width 50 with 80 px margins and a 6 px wide graph: lo = 77, hi = -27.
+    const t = constrainTransform({ k: 0.01, x: 0, y: 0 }, bounds, { width: 50, height: 50 }, margin);
+    expect(t.x).toBeCloseTo((77 + -27) / 2);
+    expect(Number.isFinite(t.y)).toBe(true);
+  });
+});
+
+describe("sameTransform", () => {
+  it("tolerates sub-pixel differences only", () => {
+    expect(sameTransform({ k: 1, x: 10, y: 10 }, { k: 1, x: 10.4, y: 9.7 })).toBe(true);
+    expect(sameTransform({ k: 1, x: 10, y: 10 }, { k: 1, x: 11, y: 10 })).toBe(false);
+    expect(sameTransform({ k: 1, x: 10, y: 10 }, { k: 1.01, x: 10, y: 10 })).toBe(false);
   });
 });

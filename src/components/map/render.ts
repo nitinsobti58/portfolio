@@ -4,6 +4,9 @@ import type { SimLink, SimNode, Size, Transform } from "./types";
 /** Halo radius as a multiple of the node radius, for self and area nodes. */
 export const HALO_FACTOR = 1.9;
 
+/** Screen pixels between a node's halo (or disc) and its label. Shared with the pill overlay. */
+export const LABEL_GAP = 6;
+
 export type Scene = {
   nodes: readonly SimNode[];
   links: readonly SimLink[];
@@ -99,28 +102,19 @@ export function drawMap(
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  // Labels are drawn in screen space so they stay a constant size.
-  ctx.save();
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  for (const node of scene.nodes) {
-    if (node.x == null || node.y == null) continue;
-    const sx = node.x * t.k + t.x;
-    const sy = node.y * t.k + t.y;
-    // Self and area nodes carry a halo (see above); hang their labels below it.
-    const haloFactor = node.type === "project" ? 1 : HALO_FACTOR;
-    const gap = node.radius * haloFactor * t.k + 6;
-    if (node.type === "self") {
-      ctx.font = `500 15px ${palette.fontFamily}`;
-      ctx.fillStyle = palette.label;
-    } else if (node.type === "area") {
-      ctx.font = `500 13px ${palette.fontFamily}`;
-      ctx.fillStyle = palette.label;
-    } else {
-      ctx.font = `400 12px ${palette.fontFamily}`;
-      ctx.fillStyle = palette.labelMuted;
-    }
-    ctx.fillText(node.label, sx, sy + gap);
+  // The DOM overlay carries every area and project label as a pill; only
+  // the center node keeps a canvas label. Drawn in screen space so it stays
+  // a constant size at any zoom.
+  const self = scene.nodes.find((n) => n.type === "self");
+  if (self && self.x != null && self.y != null) {
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = `500 15px ${palette.fontFamily}`;
+    ctx.fillStyle = palette.label;
+    const sx = self.x * t.k + t.x;
+    const sy = self.y * t.k + t.y + self.radius * HALO_FACTOR * t.k + LABEL_GAP;
+    ctx.fillText(self.label, sx, sy);
+    ctx.restore();
   }
-  ctx.restore();
 }

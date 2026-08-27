@@ -31,6 +31,13 @@ export const SELF_ID = "self";
 export const areaNodeId = (area: AreaId) => `area:${area}`;
 export const projectNodeId = (slug: string) => `project:${slug}`;
 
+const PROJECT_PREFIX = "project:";
+
+/** Inverse of `projectNodeId`; null for ids that are not project nodes. */
+export function projectSlugOf(id: string): string | null {
+  return id.startsWith(PROJECT_PREFIX) ? id.slice(PROJECT_PREFIX.length) : null;
+}
+
 const RADIUS = {
   self: 34,
   area: 26,

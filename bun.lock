@@ -13,6 +13,7 @@
         "clsx": "^2.1.1",
         "d3-force": "^3.0.0",
         "d3-selection": "^3.0.0",
+        "d3-transition": "^3",
         "d3-zoom": "^3.0.0",
         "lucide-react": "^1.34.0",
         "motion": "^13.1.1",
@@ -31,6 +32,7 @@
         "@testing-library/react": "^16.3.3",
         "@types/d3-force": "^3.0.10",
         "@types/d3-selection": "^3.0.11",
+        "@types/d3-transition": "^3",
         "@types/d3-zoom": "^3.0.8",
         "@types/mdx": "^2.0.14",
         "@types/node": "^20",
@@ -387,6 +389,8 @@
     "@types/d3-interpolate": ["@types/d3-interpolate@3.0.4", "", { "dependencies": { "@types/d3-color": "*" } }, "sha512-mgLPETlrpVV1YRJIglr4Ez47g7Yxjl1lj7YKsiMCb27VJH9W8NVM6Bb9d8kkpG/uAQS5AmbA48q2IAolKKo1MA=="],
 
     "@types/d3-selection": ["@types/d3-selection@3.0.11", "", {}, "sha512-bhAXu23DJWsrI45xafYpkQ4NtcKMwWnAC/vKrd2l+nxMFuvOT3XMYTIj2opv8vq8AO5Yh7Qac/nSeP/3zjTK0w=="],
+
+    "@types/d3-transition": ["@types/d3-transition@3.0.9", "", { "dependencies": { "@types/d3-selection": "*" } }, "sha512-uZS5shfxzO3rGlu0cC3bjmMFKsXv+SmZZcgp0KD22ts4uGXp5EVYGzu/0YdwZeKmddhcAccYtREJKkPfXkZuCg=="],
 
     "@types/d3-zoom": ["@types/d3-zoom@3.0.8", "", { "dependencies": { "@types/d3-interpolate": "*", "@types/d3-selection": "*" } }, "sha512-iqMC4/YlFCSlO8+2Ii1GGGliCAY4XdeG748w5vQUbevlbDu0zSjH/+jojorQVBK/se0j6DUFNPBGSqD3YWYnDw=="],
 
