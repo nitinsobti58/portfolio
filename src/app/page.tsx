@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 
+import { MapSection } from "@/components/map/map-section";
 import { ProjectGrid } from "@/components/projects/project-grid";
 import { buttonVariants } from "@/components/ui/button";
 import { featuredProject, sortedProjects } from "@/data/projects";
@@ -36,8 +37,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* The interactive map mounts here in a later phase. The grid below stays as the semantic fallback. */}
-      <section id="map" aria-label="Portfolio map" />
+      <MapSection />
 
       <section className="flex flex-col gap-6">
         <div className="flex items-end justify-between gap-4">
