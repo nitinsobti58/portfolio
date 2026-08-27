@@ -1,0 +1,17 @@
+## Overview
+
+{/* TODO: what the tool does in two sentences, and who it is for. */}
+
+A lightweight market-data tool. Version one deliberately leaves out infrastructure like Redis and WebSockets: the goal was a small, correct, shippable product, with the option to add a real-time layer later if usage justified it.
+
+## Decisions
+
+- **No Redis or WebSockets in v1.** Polling and in-process caching were enough for the first version, and the omission kept deployment to a single process.
+
+{/* TODO: add the other one or two decisions you would defend in an interview. */}
+
+## Stack
+
+{/* TODO: confirm the stack. */}
+
+TypeScript, Next.js.

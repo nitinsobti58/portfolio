@@ -1,0 +1,21 @@
+## Overview
+
+This site. The homepage is an interactive, force-directed map of my work, drawn with the Canvas 2D API and simulated with d3-force. Every project on the map also exists as an ordinary server-rendered route with a written case study, so the map is an experience layer rather than the only way in.
+
+## Decisions
+
+- **Canvas 2D over WebGL.** The visual target is flat and soft, not glowing. Canvas 2D matches that aesthetic, costs a fraction of the hours, and the rendering layer is isolated so it could be swapped later without touching the simulation or interaction code.
+- **Hand-rolled d3-force loop over a graph library.** Full control over how the clustering feels, and a better story about what was actually built.
+- **Map on top of crawlable routes.** Search engines and screen readers get real HTML; the canvas is decoration for people who can see it.
+- **No map on mobile.** Touch plus a force graph plus a small screen was rejected outright. Phones get the project grid.
+
+## Performance rules
+
+- Per-frame positions never touch React state. They live in refs and the overlay DOM is mutated directly.
+- Decorative particles are not simulated; they lerp toward an anchor with a small sinusoidal drift.
+- The simulation is pre-settled before first paint so the map never "explodes" on load.
+- The animation loop pauses when the tab is hidden or the map scrolls out of view.
+
+## Stack
+
+Next.js, TypeScript, Canvas 2D, d3-force, d3-zoom, Tailwind CSS, shadcn/ui, MDX, Vitest. Deployed on Vercel.

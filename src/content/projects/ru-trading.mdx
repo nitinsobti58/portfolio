@@ -1,0 +1,53 @@
+## Overview
+
+RU Trading is a paper-trading web application that simulates stock market trading on real-time data, so users can practice strategies without financial risk. It was built by a five-person team over a semester. I served as **Scrum Lead**, ran planning and reviews, and owned the market-data, caching, and order-mechanics layers.
+
+## Role
+
+- Ran sprint planning, stand-ups, and retrospectives for a five-person team
+- Owned the backend data path: quote ingestion, caching, rate limiting, and the order ledger
+- Set the data-contract conventions that let the TypeScript and Python halves share one schema
+
+{/* TODO: add 2–3 concrete outcomes (users, sprint count, demo results). */}
+
+## Architecture
+
+A Next.js frontend talks to a FastAPI backend over REST, with a WebSocket channel for live quotes. Market data comes from Alpaca and is cached in Redis (hot) and Postgres (warm) before falling back to Alpaca REST. All outbound Alpaca calls go through a shared sliding-window rate limiter.
+
+The schema lives in a single Drizzle ORM file as the source of truth. The Python backend reads and writes through SQLAlchemy models against the same tables, and migrations are handled exclusively by Drizzle.
+
+{/* TODO: add the system architecture diagram (public/projects/ru-trading/architecture.png). */}
+
+## Highlights
+
+### Three-tier quote caching
+
+Quotes are served from Redis first, then Postgres, then Alpaca's REST API. Each tier backfills the one above it, so a symbol that is being watched by anyone stays hot and an idle symbol costs nothing.
+
+### Sliding-window rate limiting
+
+Every outbound request to Alpaca passes through one shared limiter. A sliding window (rather than fixed buckets) smooths bursts at window boundaries and keeps the app safely under the provider's quota during market open.
+
+### Dual-ORM data contract
+
+The Drizzle schema is the only place tables are defined. SQLAlchemy models on the Python side mirror it and are checked against it, so the two runtimes never drift. Migrations run from one place.
+
+### Buying-power reservations and a transaction ledger
+
+Placing an order reserves buying power immediately and records a ledger entry; fills and cancellations settle against that reservation. The ledger is append-only, which makes account history auditable and reconciliation straightforward.
+
+### Kalshi prediction-market strategy engine
+
+A strategy module evaluates Kalshi prediction-market contracts alongside equities, so users can express a view across both instrument types from one account.
+
+### NLP news pipeline
+
+Per-symbol news is pulled, scored, and attached to stock detail pages so a user sees the headlines that moved a name next to its chart.
+
+## What I'd do differently
+
+{/* TODO: one or two honest reflections — what you would simplify, what you would keep. */}
+
+## Stack
+
+Next.js, TypeScript, FastAPI, Python, PostgreSQL, Redis, Drizzle ORM, SQLAlchemy, Better Auth, WebSockets, Alpaca API, Alpha Vantage.
