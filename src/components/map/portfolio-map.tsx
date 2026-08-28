@@ -3,7 +3,9 @@
 // Side-effect import: patches `selection.transition()` onto d3-selection.
 import "d3-transition";
 
-import { select } from "d3-selection";
+import { Minus, Plus } from "lucide-react";
+import { select, type Selection } from "d3-selection";
+import type { Transition } from "d3-transition";
 import {
   useEffect,
   useEffectEvent,
@@ -25,41 +27,79 @@ import {
   drawnRadius,
   fitTransform,
   focusTransform,
+  panToReveal,
   sameTransform,
 } from "./fit";
 import { hitTest } from "./hit";
+import { placeLabels, type LabelSpec, type Obstacle } from "./labels";
 import { MapOverlay, type PillRegistry } from "./map-overlay";
+import {
+  centerOn,
+  drawMinimap,
+  MINIMAP_SIZE,
+  minimapToWorld,
+  minimapTransform,
+  viewportRect,
+} from "./minimap";
 import { readPalette } from "./palette";
 import { drawMap, LABEL_GAP } from "./render";
 import { createSimulation, settle } from "./simulation";
-import type { SimNode, Size, Transform } from "./types";
-import { createMapZoom, FLY_DURATION, PAN_MARGIN, toZoomTransform } from "./zoom";
+import type { Rect, SimNode, Size, Transform } from "./types";
+import {
+  createMapZoom,
+  FLY_DURATION,
+  PAN_MARGIN,
+  SCALE_EXTENT,
+  toZoomTransform,
+  ZOOM_STEP,
+} from "./zoom";
 
 type Props = {
   className?: string;
 };
 
-/** How far (px) a pill's anchor may sit outside the map before the pill is hidden. */
-const PILL_SLACK = 40;
+/** Screen pixels kept between a revealed pill (and its node) and the map edge. */
+const REVEAL_MARGIN = 24;
+
+/** How long the cooperative-gesture hint stays up after the last plain wheel event. */
+const HINT_MS = 1200;
+
+/** Why a pill is currently hidden. Off-screen pills leave the tab order; Tab brings them back into view. */
+type HiddenReason = "offscreen" | "collision";
 
 /** Imperative handles created by the mount effect; null before mount and after unmount. */
 type MapControls = {
   focusArea: (area: AreaId) => void;
   fitView: () => void;
   syncPills: () => void;
+  zoomBy: (factor: number) => void;
+  /**
+   * Makes a hidden pill visible so it can take focus. Returns true when the
+   * map is panning to it and will focus it itself; false when the caller
+   * should let the browser move focus normally.
+   */
+  revealPill: (pill: HTMLElement) => boolean;
 };
+
+type ZoomTarget =
+  | Selection<HTMLElement, unknown, null, undefined>
+  | Transition<HTMLElement, unknown, null, undefined>;
 
 /**
  * Canvas 2D map of the portfolio with d3-zoom pan/zoom, click-to-focus
- * areas, and a DOM overlay of pills that double as the labels and the
- * keyboard path. All per-frame state (positions, the zoom transform, the
+ * areas, a minimap, and a DOM overlay of pills that double as the labels and
+ * the keyboard path. All per-frame state (positions, the zoom transform, the
  * palette) lives inside the mount effect; React only re-renders on the
  * discrete `selectedArea` / preview changes.
  */
 export function PortfolioMap({ className }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const hintRef = useRef<HTMLDivElement>(null);
+  const zoomOutRef = useRef<HTMLButtonElement>(null);
+  const zoomInRef = useRef<HTMLButtonElement>(null);
   const resetRef = useRef<HTMLButtonElement>(null);
   const pillsRef = useRef<PillRegistry>(new Map());
   const controlsRef = useRef<MapControls | null>(null);
@@ -108,10 +148,34 @@ export function PortfolioMap({ className }: Props) {
     controlsRef.current?.fitView();
   };
 
+  const zoomBy = (factor: number, button: HTMLButtonElement) => {
+    if (button.getAttribute("aria-disabled") === "true") return;
+    controlsRef.current?.zoomBy(factor);
+  };
+
+  /** The pill Tab would move to next, in the overlay's DOM order (area → its projects → next area). */
+  const adjacentPill = (active: HTMLElement, backwards: boolean): HTMLElement | null => {
+    const pills = Array.from(overlayRef.current?.querySelectorAll<HTMLElement>("a, button") ?? []);
+    const index = pills.indexOf(active);
+    if (index >= 0) return pills[backwards ? index - 1 : index + 1] ?? null;
+    // Shift+Tab from the first control button walks back into the overlay.
+    if (backwards && active === zoomOutRef.current) return pills[pills.length - 1] ?? null;
+    return null;
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Escape") return;
-    event.stopPropagation();
-    resetView();
+    // The preview sheet is portaled, but React still bubbles its keys here; it manages its own.
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !containerRef.current?.contains(target)) return;
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      resetView();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    // Off-screen pills are hidden and would be skipped: pan them into view first.
+    const next = adjacentPill(target, event.shiftKey);
+    if (next && controlsRef.current?.revealPill(next)) event.preventDefault();
   };
 
   // Effect events read the latest state from listeners registered once on mount.
@@ -135,16 +199,20 @@ export function PortfolioMap({ className }: Props) {
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
+    const minimap = minimapRef.current;
     const overlay = overlayRef.current;
-    if (!container || !canvas || !overlay) return;
+    if (!container || !canvas || !minimap || !overlay) return;
 
     const sim = settle(createSimulation(buildMapGraph()));
     const nodeById = new Map(sim.nodes.map((n) => [n.id, n]));
     const bounds = boundsOf(sim.nodes);
+    // The graph is static, so the world → minimap mapping is fixed for the map's lifetime.
+    const minimapView = minimapTransform(bounds);
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     let palette = readPalette();
     let size: Size = { width: 0, height: 0 };
+    let minimapShown = true;
     /** Mirror of the transform d3-zoom holds on the container. Only `onZoom` writes it. */
     let transform: Transform = { k: 1, x: 0, y: 0 };
     let fit: Transform = transform;
@@ -158,6 +226,9 @@ export function PortfolioMap({ className }: Props) {
     let programmatic = false;
     let flight = 0;
     let frame = 0;
+    /** Per-pill results of the last sync, for the Tab-reveal path. */
+    const hiddenReason = new Map<HTMLElement, HiddenReason>();
+    const revealRects = new Map<HTMLElement, Rect>();
 
     const draw = () => {
       const ctx = canvas.getContext("2d");
@@ -165,28 +236,88 @@ export function PortfolioMap({ className }: Props) {
       const dpr = window.devicePixelRatio || 1;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawMap(ctx, sim, palette, transform, size);
+      if (!minimapShown) return;
+      const mctx = minimap.getContext("2d");
+      if (!mctx) return;
+      mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawMinimap(mctx, sim.nodes, palette, minimapView, viewportRect(transform, size, minimapView));
     };
 
-    // Positions every registered pill under its node, in screen space, by
-    // mutating the DOM directly. Pills keep a constant size at any zoom.
-    // Pills that land outside the map are hidden, which also drops them from
-    // the tab order so keyboard users are never focused on something unseen.
+    const setAria = (element: HTMLElement | null, name: string, value: string) => {
+      if (element && element.getAttribute(name) !== value) element.setAttribute(name, value);
+    };
+
+    // Positions every registered pill in screen space by mutating the DOM
+    // directly. Pills keep a constant size at any zoom. Labels that would
+    // cover each other or a node are flipped above their node or hidden
+    // (labels.ts); pills that land outside the map are hidden, which also
+    // drops them from the tab order so keyboard users are never focused on
+    // something unseen. The focused pill is never hidden: that would blur it
+    // to <body>.
     const syncPills = () => {
       const t = transform;
+      const active = document.activeElement;
+
+      // Read phase: measure every pill before any style is written.
+      const specs: LabelSpec[] = [];
+      const elements: HTMLElement[] = [];
       for (const [id, element] of pillsRef.current) {
         const node = nodeById.get(id);
-        if (!node || node.x == null || node.y == null) continue;
-        const sx = Math.round(node.x * t.k + t.x);
-        const sy = Math.round(node.y * t.k + t.y + drawnRadius(node) * t.k + LABEL_GAP);
-        element.style.transform = `translate(${sx}px, ${sy}px) translateX(-50%)`;
-        const onScreen =
-          sx > -PILL_SLACK && sx < size.width + PILL_SLACK && sy > -PILL_SLACK && sy < size.height;
-        // Hiding the focused pill would blur it to <body>; keep it (clipped) until focus moves on.
-        const keep = onScreen || element === document.activeElement;
-        element.style.visibility = keep ? "" : "hidden";
+        if (!node || node.x == null || node.y == null || node.type === "self") continue;
+        specs.push({
+          id,
+          kind: node.type,
+          x: node.x * t.k + t.x,
+          y: node.y * t.k + t.y,
+          offset: drawnRadius(node) * t.k + LABEL_GAP,
+          width: element.offsetWidth,
+          height: element.offsetHeight,
+          pinned: element === active,
+        });
+        elements.push(element);
       }
+      const obstacles: Obstacle[] = [];
+      for (const node of sim.nodes) {
+        if (node.x == null || node.y == null) continue;
+        obstacles.push({
+          id: node.id,
+          x: node.x * t.k + t.x,
+          y: node.y * t.k + t.y,
+          r: drawnRadius(node) * t.k,
+        });
+      }
+      const placed = placeLabels(specs, obstacles);
+
+      // Write phase.
+      hiddenReason.clear();
+      revealRects.clear();
+      placed.forEach((p, i) => {
+        const element = elements[i];
+        const spec = specs[i];
+        element.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+        const cx = p.x + spec.width / 2;
+        const cy = p.y + spec.height / 2;
+        const onScreen = cx >= 0 && cx <= size.width && cy >= 0 && cy <= size.height;
+        let reason: HiddenReason | null = null;
+        if (!onScreen && !spec.pinned) reason = "offscreen";
+        else if (!p.visible) reason = "collision";
+        element.style.visibility = reason ? "hidden" : "";
+        if (reason) hiddenReason.set(element, reason);
+        // What a Tab-reveal pan must bring into view: the node disc plus its pill.
+        const r = spec.offset - LABEL_GAP;
+        const left = Math.min(p.x, spec.x - r);
+        const top = Math.min(p.y, spec.y - r);
+        revealRects.set(element, {
+          x: left,
+          y: top,
+          width: Math.max(p.x + spec.width, spec.x + r) - left,
+          height: Math.max(p.y + spec.height, spec.y + r) - top,
+        });
+      });
       overlay.style.visibility = "visible";
       if (resetRef.current) resetRef.current.hidden = sameTransform(t, fit);
+      setAria(zoomInRef.current, "aria-disabled", String(t.k >= SCALE_EXTENT[1] - 1e-3));
+      setAria(zoomOutRef.current, "aria-disabled", String(t.k <= SCALE_EXTENT[0] + 1e-3));
     };
 
     const render = () => {
@@ -223,22 +354,41 @@ export function PortfolioMap({ className }: Props) {
       .call(zoom)
       .on("dblclick.zoom", null);
 
-    const setTransform = (target: Transform, animate: boolean) => {
-      const next = toZoomTransform(target);
+    /**
+     * Runs a zoom operation, animated as a d3 transition unless motion is
+     * reduced. `done` fires once the target transform is in place (not when
+     * user input interrupts the flight).
+     */
+    const fly = (
+      animate: boolean,
+      run: (target: ZoomTarget) => void,
+      done?: () => void,
+      duration = FLY_DURATION,
+    ) => {
       const id = ++flight;
       programmatic = true;
       if (animate && !reduceMotion.matches) {
-        selection
-          .transition()
-          .duration(FLY_DURATION)
-          .on("end interrupt", () => {
-            if (id === flight) programmatic = false;
-          })
-          .call(zoom.transform, next);
+        run(
+          selection
+            .transition()
+            .duration(duration)
+            .on("end", () => {
+              if (id === flight) programmatic = false;
+              done?.();
+            })
+            .on("interrupt", () => {
+              if (id === flight) programmatic = false;
+            }),
+        );
       } else {
-        selection.call(zoom.transform, next);
+        run(selection);
         programmatic = false;
+        done?.();
       }
+    };
+
+    const setTransform = (target: Transform, animate: boolean, done?: () => void) => {
+      fly(animate, (s) => zoom.transform(s, toZoomTransform(target)), done);
     };
 
     const focusArea = (area: AreaId) => {
@@ -251,9 +401,41 @@ export function PortfolioMap({ className }: Props) {
       if (!sameTransform(transform, fit)) setTransform(fit, true);
     };
 
-    // Sizes the backing store for the container and the *current* device pixel
-    // ratio. Runs on layout changes and on DPR changes (window moved between
-    // screens). Re-fits only while the user has not taken over the view.
+    // Zoom in / out about the viewport center. d3's scaleBy clamps to the
+    // scale extent and runs the pan constraint, unlike a raw zoom.transform.
+    const zoomBy = (factor: number) => {
+      interacted = true;
+      fly(true, (s) => zoom.scaleBy(s, factor), undefined, FLY_DURATION / 2);
+    };
+
+    const revealPill = (pill: HTMLElement) => {
+      const reason = hiddenReason.get(pill);
+      if (!reason) return false;
+      if (reason === "collision") {
+        // On screen but yielding to another label: show it and let the browser
+        // focus it; the next sync keeps it visible while it has focus.
+        pill.style.visibility = "";
+        return false;
+      }
+      const rect = revealRects.get(pill);
+      if (!rect) return false;
+      const target = constrainTransform(
+        panToReveal(transform, rect, size, REVEAL_MARGIN),
+        bounds,
+        size,
+        PAN_MARGIN,
+      );
+      interacted = true;
+      setTransform(target, true, () => {
+        render();
+        pill.focus({ preventScroll: true });
+      });
+      return true;
+    };
+
+    // Sizes the backing stores for the container and the *current* device
+    // pixel ratio. Runs on layout changes and on DPR changes (window moved
+    // between screens). Re-fits only while the user has not taken over the view.
     const resize = () => {
       const rect = container.getBoundingClientRect();
       size = {
@@ -265,6 +447,12 @@ export function PortfolioMap({ className }: Props) {
       canvas.height = Math.round(size.height * dpr);
       canvas.style.width = `${size.width}px`;
       canvas.style.height = `${size.height}px`;
+      minimap.width = Math.round(MINIMAP_SIZE.width * dpr);
+      minimap.height = Math.round(MINIMAP_SIZE.height * dpr);
+      minimap.style.width = `${MINIMAP_SIZE.width}px`;
+      minimap.style.height = `${MINIMAP_SIZE.height}px`;
+      // Hidden by the container query on narrow maps; skip its redraws then.
+      minimapShown = minimap.offsetWidth > 0;
       fit = fitTransform(sim.nodes, size);
       if (!interacted) {
         setTransform(fit, false);
@@ -276,7 +464,7 @@ export function PortfolioMap({ className }: Props) {
       render();
     };
 
-    controlsRef.current = { focusArea, fitView, syncPills };
+    controlsRef.current = { focusArea, fitView, syncPills, zoomBy, revealPill };
     resize();
 
     const observer = new ResizeObserver(resize);
@@ -297,7 +485,7 @@ export function PortfolioMap({ className }: Props) {
     watchDpr();
 
     // next-themes flips the `dark` class on <html>; the palette is re-read once
-    // per flip, after the DOM has actually changed, and only the canvas repaints.
+    // per flip, after the DOM has actually changed, and only the canvases repaint.
     const themeObserver = new MutationObserver(() => {
       palette = readPalette();
       render();
@@ -317,7 +505,74 @@ export function PortfolioMap({ className }: Props) {
     canvas.addEventListener("click", onClick);
     canvas.addEventListener("pointermove", onPointerMove);
 
+    // Focus changes can pin or release a label; re-run the placement so a
+    // pill that only shows while focused hides again once focus moves on.
+    const onFocusChange = () => syncPills();
+    overlay.addEventListener("focusin", onFocusChange);
+    overlay.addEventListener("focusout", onFocusChange);
+
+    // Minimap: press or drag recenters the view on the point under the
+    // pointer, through zoom.transform so the container's __zoom stays the
+    // single source of truth. The pointerdown is cancelled so no compatibility
+    // mousedown reaches d3-zoom on the container (it would start a pan).
+    let scrubbing = false;
+    const recenter = (event: PointerEvent) => {
+      const box = minimap.getBoundingClientRect();
+      const w = minimapToWorld(minimapView, event.clientX - box.left, event.clientY - box.top);
+      const target = constrainTransform(centerOn(transform, size, w.x, w.y), bounds, size, PAN_MARGIN);
+      interacted = true;
+      setTransform(target, false);
+    };
+    const onMinimapDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      scrubbing = true;
+      recenter(event);
+      try {
+        minimap.setPointerCapture(event.pointerId);
+      } catch {
+        // The pointer is already gone (or synthetic); the press alone still recentered.
+      }
+    };
+    const onMinimapMove = (event: PointerEvent) => {
+      if (scrubbing) recenter(event);
+    };
+    const onMinimapUp = () => {
+      scrubbing = false;
+    };
+    const swallow = (event: Event) => event.stopPropagation();
+    minimap.addEventListener("pointerdown", onMinimapDown);
+    minimap.addEventListener("pointermove", onMinimapMove);
+    minimap.addEventListener("pointerup", onMinimapUp);
+    minimap.addEventListener("pointercancel", onMinimapUp);
+    minimap.addEventListener("touchstart", swallow, { passive: true });
+
+    // Cooperative gestures: a plain wheel scrolls the page (the zoom filter
+    // lets it through); show how to zoom instead, briefly.
+    const hint = hintRef.current;
+    if (hint) {
+      const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+      hint.textContent = `Use ${mac ? "⌘" : "Ctrl"} + scroll to zoom`;
+    }
+    let hintTimer = 0;
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || !hint) return;
+      hint.setAttribute("data-show", "");
+      window.clearTimeout(hintTimer);
+      hintTimer = window.setTimeout(() => hint.removeAttribute("data-show"), HINT_MS);
+    };
+    container.addEventListener("wheel", onWheel, { passive: true });
+
     return () => {
+      window.clearTimeout(hintTimer);
+      container.removeEventListener("wheel", onWheel);
+      minimap.removeEventListener("pointerdown", onMinimapDown);
+      minimap.removeEventListener("pointermove", onMinimapMove);
+      minimap.removeEventListener("pointerup", onMinimapUp);
+      minimap.removeEventListener("pointercancel", onMinimapUp);
+      minimap.removeEventListener("touchstart", swallow);
+      overlay.removeEventListener("focusin", onFocusChange);
+      overlay.removeEventListener("focusout", onFocusChange);
       canvas.removeEventListener("click", onClick);
       canvas.removeEventListener("pointermove", onPointerMove);
       themeObserver.disconnect();
@@ -335,18 +590,20 @@ export function PortfolioMap({ className }: Props) {
     controlsRef.current?.syncPills();
   }, [selectedArea]);
 
+  const control = cn(buttonVariants({ variant: "outline", size: "icon-sm" }), "aria-disabled:opacity-50");
+
   return (
     <div
       ref={containerRef}
       // overflow-clip (not hidden): a clipped box is not a scroll container, so
       // focusing a pill near the edge cannot scroll the canvas out from under the map.
-      className={cn("relative touch-none overflow-clip", className)}
+      className={cn("relative touch-none overflow-clip @container", className)}
       onKeyDown={onKeyDown}
     >
       <canvas
         ref={canvasRef}
         role="img"
-        aria-label="Map of projects grouped by area: trading, data, web, and real estate. Drag to pan, scroll to zoom."
+        aria-label="Map of projects grouped by area: trading, data, web, and real estate. Drag to pan; zoom with the buttons or Ctrl + scroll."
         className="block cursor-grab active:cursor-grabbing"
       />
       <div ref={overlayRef} className="pointer-events-none invisible absolute inset-0">
@@ -357,15 +614,47 @@ export function PortfolioMap({ className }: Props) {
           onOpenProject={openPreview}
         />
       </div>
-      <button
-        ref={resetRef}
-        type="button"
-        hidden
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "absolute top-3 right-3")}
-        onClick={resetView}
+      <canvas
+        ref={minimapRef}
+        aria-hidden
+        className="absolute top-3 left-3 hidden cursor-pointer rounded-md border border-border/70 bg-background/80 shadow-xs backdrop-blur-sm @3xl:block"
+      />
+      <div className="absolute top-3 right-3 flex items-center gap-1">
+        <button
+          ref={zoomOutRef}
+          type="button"
+          aria-label="Zoom out"
+          className={control}
+          onClick={(event) => zoomBy(1 / ZOOM_STEP, event.currentTarget)}
+        >
+          <Minus />
+        </button>
+        <button
+          ref={zoomInRef}
+          type="button"
+          aria-label="Zoom in"
+          className={control}
+          onClick={(event) => zoomBy(ZOOM_STEP, event.currentTarget)}
+        >
+          <Plus />
+        </button>
+        <button
+          ref={resetRef}
+          type="button"
+          hidden
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          onClick={resetView}
+        >
+          Reset view
+        </button>
+      </div>
+      <div
+        ref={hintRef}
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-1/2 mx-auto w-fit -translate-y-1/2 rounded-full bg-foreground/85 px-3 py-1.5 text-xs font-medium text-background opacity-0 transition-opacity duration-200 data-show:opacity-100"
       >
-        Reset view
-      </button>
+        Use Ctrl + scroll to zoom
+      </div>
       <ProjectPreview
         project={previewProject}
         open={previewOpen}

@@ -7,6 +7,12 @@ export const HALO_FACTOR = 1.9;
 /** Screen pixels between a node's halo (or disc) and its label. Shared with the pill overlay. */
 export const LABEL_GAP = 6;
 
+/** Font size of the center node's canvas label, in CSS pixels. */
+export const CENTER_LABEL_SIZE = 15;
+
+/** Cleared padding around the center label so links stop short of the text. */
+export const CENTER_LABEL_PAD = 4;
+
 export type Scene = {
   nodes: readonly SimNode[];
   links: readonly SimLink[];
@@ -104,16 +110,25 @@ export function drawMap(
 
   // The DOM overlay carries every area and project label as a pill; only
   // the center node keeps a canvas label. Drawn in screen space so it stays
-  // a constant size at any zoom.
+  // a constant size at any zoom. The link to the area below the center runs
+  // straight through this label, so the box behind the text is cleared to
+  // the page background first, the way the pills occlude their links.
   const self = scene.nodes.find((n) => n.type === "self");
   if (self && self.x != null && self.y != null) {
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.font = `500 15px ${palette.fontFamily}`;
-    ctx.fillStyle = palette.label;
+    ctx.font = `500 ${CENTER_LABEL_SIZE}px ${palette.fontFamily}`;
     const sx = self.x * t.k + t.x;
     const sy = self.y * t.k + t.y + self.radius * HALO_FACTOR * t.k + LABEL_GAP;
+    const width = ctx.measureText(self.label).width;
+    ctx.clearRect(
+      sx - width / 2 - CENTER_LABEL_PAD,
+      sy - CENTER_LABEL_PAD,
+      width + CENTER_LABEL_PAD * 2,
+      CENTER_LABEL_SIZE + CENTER_LABEL_PAD * 2,
+    );
+    ctx.fillStyle = palette.label;
     ctx.fillText(self.label, sx, sy);
     ctx.restore();
   }

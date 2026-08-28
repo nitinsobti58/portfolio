@@ -8,6 +8,7 @@ import {
   fitTransform,
   FOCUS_MAX_SCALE,
   focusTransform,
+  panToReveal,
   sameTransform,
   toScreen,
   toWorld,
@@ -163,5 +164,32 @@ describe("sameTransform", () => {
     expect(sameTransform({ k: 1, x: 10, y: 10 }, { k: 1, x: 10.4, y: 9.7 })).toBe(true);
     expect(sameTransform({ k: 1, x: 10, y: 10 }, { k: 1, x: 11, y: 10 })).toBe(false);
     expect(sameTransform({ k: 1, x: 10, y: 10 }, { k: 1.01, x: 10, y: 10 })).toBe(false);
+  });
+});
+
+describe("panToReveal", () => {
+  const size = { width: 1000, height: 600 };
+  const t = { k: 2, x: 100, y: 50 };
+
+  it("returns the same object when the rect is already inside the margin", () => {
+    expect(panToReveal(t, { x: 100, y: 100, width: 80, height: 28 }, size, 24)).toBe(t);
+  });
+
+  it("pans by the smallest amount that brings the rect inside on each axis", () => {
+    const right = panToReveal(t, { x: 990, y: 100, width: 80, height: 28 }, size, 24);
+    expect(right.k).toBe(2);
+    expect(right.x).toBeCloseTo(100 + (1000 - 24 - 1070));
+    expect(right.y).toBe(50);
+    const upLeft = panToReveal(t, { x: -60, y: -40, width: 80, height: 28 }, size, 24);
+    expect(upLeft.x).toBeCloseTo(100 + 84);
+    expect(upLeft.y).toBeCloseTo(50 + 64);
+    const below = panToReveal(t, { x: 100, y: 700, width: 80, height: 28 }, size, 24);
+    expect(below.y).toBeCloseTo(50 + (600 - 24 - 728));
+  });
+
+  it("aligns an oversized rect by its top-left edge", () => {
+    const huge = panToReveal(t, { x: 300, y: 300, width: 5000, height: 5000 }, size, 24);
+    expect(huge.x).toBeCloseTo(100 + (24 - 300));
+    expect(huge.y).toBeCloseTo(50 + (24 - 300));
   });
 });

@@ -1,7 +1,7 @@
 import type { AreaId } from "@/data/projects";
 
 import { HALO_FACTOR } from "./render";
-import type { SimNode, Size, Transform } from "./types";
+import type { Rect, SimNode, Size, Transform } from "./types";
 
 export const IDENTITY: Transform = { k: 1, x: 0, y: 0 };
 
@@ -125,4 +125,21 @@ export function toScreen(t: Transform, x: number, y: number) {
 
 export function toWorld(t: Transform, sx: number, sy: number) {
   return { x: (sx - t.x) / t.k, y: (sy - t.y) / t.k };
+}
+
+/**
+ * The smallest pan that brings a screen rectangle at least `margin` pixels
+ * inside the viewport, keeping the scale. Returns the input object when the
+ * rectangle is already in view. A rectangle too large for the viewport is
+ * aligned by its top-left edge.
+ */
+export function panToReveal(t: Transform, rect: Rect, size: Size, margin: number): Transform {
+  let dx = 0;
+  let dy = 0;
+  if (rect.x + rect.width > size.width - margin) dx = size.width - margin - (rect.x + rect.width);
+  if (rect.x + dx < margin) dx = margin - rect.x;
+  if (rect.y + rect.height > size.height - margin) dy = size.height - margin - (rect.y + rect.height);
+  if (rect.y + dy < margin) dy = margin - rect.y;
+  if (dx === 0 && dy === 0) return t;
+  return { k: t.k, x: t.x + dx, y: t.y + dy };
 }

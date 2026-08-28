@@ -19,3 +19,11 @@ export type Size = {
   width: number;
   height: number;
 };
+
+/** Axis-aligned rectangle; `x`/`y` is the top-left corner. */
+export type Rect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};

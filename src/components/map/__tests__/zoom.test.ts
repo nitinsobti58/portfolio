@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { CLICK_DISTANCE, createMapZoom, PAN_MARGIN, SCALE_EXTENT, toZoomTransform } from "../zoom";
+import {
+  CLICK_DISTANCE,
+  createMapZoom,
+  PAN_MARGIN,
+  SCALE_EXTENT,
+  toZoomTransform,
+  WHEEL_DELTA_MAX,
+  wheelDelta,
+  zoomFilter,
+} from "../zoom";
 
 const bounds = { minX: -300, minY: -200, maxX: 300, maxY: 200 };
 const size = { width: 1000, height: 600 };
@@ -32,6 +41,11 @@ describe("createMapZoom", () => {
     expect(zoom.clickDistance()).toBe(CLICK_DISTANCE);
   });
 
+  it("uses the tracked size as the zoom extent", () => {
+    const { zoom } = make();
+    expect(zoom.extent().call({} as HTMLElement, undefined)).toEqual(extent);
+  });
+
   it("constrains panning so the graph keeps its margin on screen", () => {
     const { zoom } = make();
     const constrain = zoom.constrain();
@@ -52,5 +66,56 @@ describe("createMapZoom", () => {
     listener.call(el, { transform, sourceEvent: { type: "wheel" } }, undefined);
     expect(onZoom).toHaveBeenNthCalledWith(1, transform, false);
     expect(onZoom).toHaveBeenNthCalledWith(2, transform, true);
+  });
+});
+
+describe("zoomFilter", () => {
+  const wheel = (mods: Partial<{ ctrlKey: boolean; metaKey: boolean }> = {}) => ({
+    type: "wheel",
+    ctrlKey: false,
+    metaKey: false,
+    ...mods,
+  });
+  const mouse = (mods: Partial<{ ctrlKey: boolean; button: number }> = {}) => ({
+    type: "mousedown",
+    ctrlKey: false,
+    metaKey: false,
+    button: 0,
+    ...mods,
+  });
+
+  it("lets a plain wheel scroll the page and zooms only with ⌘/Ctrl (or a pinch)", () => {
+    expect(zoomFilter(wheel())).toBe(false);
+    expect(zoomFilter(wheel({ ctrlKey: true }))).toBe(true);
+    expect(zoomFilter(wheel({ metaKey: true }))).toBe(true);
+  });
+
+  it("keeps d3's pointer rules: primary button only, no Ctrl + click", () => {
+    expect(zoomFilter(mouse())).toBe(true);
+    expect(zoomFilter(mouse({ button: 2 }))).toBe(false);
+    expect(zoomFilter(mouse({ ctrlKey: true }))).toBe(false);
+  });
+
+  it("is installed on the behavior", () => {
+    const zoom = createMapZoom({ bounds: () => bounds, size: () => size, onZoom: vi.fn() });
+    expect(zoom.filter()).toBe(zoomFilter);
+  });
+});
+
+describe("wheelDelta", () => {
+  it("keeps d3's formula for small deltas (trackpad pinch and scroll)", () => {
+    expect(wheelDelta({ deltaY: -10, deltaMode: 0, ctrlKey: false })).toBeCloseTo(0.02);
+    expect(wheelDelta({ deltaY: -10, deltaMode: 0, ctrlKey: true })).toBeCloseTo(0.2);
+    expect(wheelDelta({ deltaY: -3, deltaMode: 1, ctrlKey: false })).toBeCloseTo(0.15);
+  });
+
+  it("clamps a Ctrl + mouse-wheel notch to one moderate step in either direction", () => {
+    expect(wheelDelta({ deltaY: -120, deltaMode: 0, ctrlKey: true })).toBe(WHEEL_DELTA_MAX);
+    expect(wheelDelta({ deltaY: 120, deltaMode: 0, ctrlKey: true })).toBe(-WHEEL_DELTA_MAX);
+  });
+
+  it("is installed on the behavior", () => {
+    const zoom = createMapZoom({ bounds: () => bounds, size: () => size, onZoom: vi.fn() });
+    expect(zoom.wheelDelta()).toBe(wheelDelta);
   });
 });
