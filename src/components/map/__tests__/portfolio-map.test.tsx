@@ -7,6 +7,9 @@ import { PortfolioMap } from "../portfolio-map";
 /** Flip on per test to make fly-to transforms apply synchronously. */
 let reducedMotion = false;
 
+/** The map's IntersectionObserver callback, so a test can scroll the map "off screen". */
+let intersectionCallback: ((entries: { isIntersecting: boolean }[]) => void) | null = null;
+
 beforeAll(() => {
   // jsdom has no layout, canvas, or ResizeObserver; the map only needs them to exist.
   class ResizeObserverStub {
@@ -15,6 +18,15 @@ beforeAll(() => {
     disconnect() {}
   }
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  class IntersectionObserverStub {
+    constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+      intersectionCallback = callback;
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("IntersectionObserver", IntersectionObserverStub);
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: query.includes("prefers-reduced-motion") && reducedMotion,
     media: query,
@@ -33,7 +45,20 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   reducedMotion = false;
+  intersectionCallback = null;
+  vi.restoreAllMocks();
 });
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Number of animation frames requested in a window, with the map already mounted. */
+async function framesIn(ms: number) {
+  const raf = vi.spyOn(window, "requestAnimationFrame");
+  await wait(ms);
+  const count = raf.mock.calls.length;
+  raf.mockRestore();
+  return count;
+}
 
 const areaNames = ["Trading", "Data", "Web", "Real Estate"];
 
@@ -226,5 +251,51 @@ describe("PortfolioMap controls", () => {
     const notPrevented = fireEvent.keyDown(trading, { key: "Tab" });
     expect(notPrevented).toBe(true);
     expect(trading).toHaveFocus();
+  });
+});
+
+describe("PortfolioMap frame loop", () => {
+  it("runs continuously while the map is visible", async () => {
+    render(<PortfolioMap />);
+    expect(await framesIn(120)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("does not loop under reduced motion", async () => {
+    reducedMotion = true;
+    render(<PortfolioMap />);
+    await wait(20);
+    expect(await framesIn(120)).toBe(0);
+  });
+
+  it("pauses while the map is off screen and resumes when it is back", async () => {
+    render(<PortfolioMap />);
+    intersectionCallback!([{ isIntersecting: false }]);
+    await wait(20);
+    expect(await framesIn(120)).toBe(0);
+    intersectionCallback!([{ isIntersecting: true }]);
+    expect(await framesIn(120)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("pauses while the document is hidden", async () => {
+    render(<PortfolioMap />);
+    const state = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await wait(20);
+    expect(await framesIn(120)).toBe(0);
+    state.mockReturnValue("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(await framesIn(120)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("still repaints input while paused, with one coalesced frame", async () => {
+    reducedMotion = true;
+    render(<PortfolioMap />);
+    await wait(20);
+    const raf = vi.spyOn(window, "requestAnimationFrame");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(raf).toHaveBeenCalledTimes(1);
+    await wait(50);
+    expect(raf).toHaveBeenCalledTimes(1);
   });
 });

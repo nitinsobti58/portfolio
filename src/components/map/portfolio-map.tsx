@@ -42,8 +42,10 @@ import {
   viewportRect,
 } from "./minimap";
 import { readPalette } from "./palette";
-import { drawMap, LABEL_GAP } from "./render";
+import { generateParticles, stepParticles, type ParticleAnchor } from "./particles";
+import { drawMap, LABEL_GAP, type ParticleLayer } from "./render";
 import { createSimulation, settle } from "./simulation";
+import { renderSprites } from "./sprites";
 import type { Rect, SimNode, Size, Transform } from "./types";
 import {
   createMapZoom,
@@ -63,6 +65,9 @@ const REVEAL_MARGIN = 24;
 
 /** How long the cooperative-gesture hint stays up after the last plain wheel event. */
 const HINT_MS = 1200;
+
+/** Longest step the particle clock takes in one frame, seconds; a hitch or a resumed loop never jumps further. */
+const MAX_FRAME_DT = 0.1;
 
 /** Why a pill is currently hidden. Off-screen pills leave the tab order; Tab brings them back into view. */
 type HiddenReason = "offscreen" | "collision";
@@ -210,7 +215,23 @@ export function PortfolioMap({ className }: Props) {
     const minimapView = minimapTransform(bounds);
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+    // Decorative dust, generated once from the settled area nodes. Only its
+    // positions change afterwards, and only inside the frame loop.
+    const anchors: ParticleAnchor[] = [];
+    for (const node of sim.nodes) {
+      if (node.type === "area" && node.area && node.x != null && node.y != null) {
+        anchors.push({ x: node.x, y: node.y, radius: node.radius, area: node.area });
+      }
+    }
+    const field = generateParticles(anchors);
+
     let palette = readPalette();
+    const buildSprites = () => {
+      const sprites = renderSprites(palette);
+      return anchors.map((a) => sprites[a.area]);
+    };
+    /** Sprites are rebuilt with the palette; `dpr` is kept current by `resize()`. */
+    const particles: ParticleLayer = { field, sprites: buildSprites(), dpr: 1 };
     let size: Size = { width: 0, height: 0 };
     let minimapShown = true;
     /** Mirror of the transform d3-zoom holds on the container. Only `onZoom` writes it. */
@@ -225,20 +246,34 @@ export function PortfolioMap({ className }: Props) {
      */
     let programmatic = false;
     let flight = 0;
+    /** The continuous frame loop: its RAF id while running, 0 while paused. */
+    let loop = 0;
+    /** One coalesced frame for input while the loop is paused. */
     let frame = 0;
+    /** True when the view changed since the minimap and the pills were last synced. */
+    let dirty = false;
+    /** Particle clock, seconds; only advances while the loop runs. */
+    let time = 0;
+    let last = 0;
+    let intersecting = true;
     /** Per-pill results of the last sync, for the Tab-reveal path. */
     const hiddenReason = new Map<HTMLElement, HiddenReason>();
     const revealRects = new Map<HTMLElement, Rect>();
 
-    const draw = () => {
+    const paintMap = () => {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       const dpr = window.devicePixelRatio || 1;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawMap(ctx, sim, palette, transform, size);
+      drawMap(ctx, sim, palette, transform, size, particles);
+    };
+
+    const paintMinimap = () => {
+      // Hidden by the container query on narrow maps; skip its redraws then.
       if (!minimapShown) return;
       const mctx = minimap.getContext("2d");
       if (!mctx) return;
+      const dpr = window.devicePixelRatio || 1;
       mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawMinimap(mctx, sim.nodes, palette, minimapView, viewportRect(transform, size, minimapView));
     };
@@ -320,23 +355,65 @@ export function PortfolioMap({ className }: Props) {
       setAria(zoomOutRef.current, "aria-disabled", String(t.k <= SCALE_EXTENT[0] + 1e-3));
     };
 
+    /** Paints everything now: both canvases and the pills. */
     const render = () => {
       if (frame) {
         cancelAnimationFrame(frame);
         frame = 0;
       }
-      draw();
+      dirty = false;
+      paintMap();
+      paintMinimap();
       syncPills();
     };
 
-    // Gestures can fire many zoom events per frame; coalesce them into one paint.
-    const scheduleFrame = () => {
-      if (frame) return;
+    // The view changed (zoom, pan, focus). While the loop runs, its next
+    // tick picks that up; while it is paused, one coalesced frame repaints.
+    // Gestures can fire many zoom events per frame, so nothing paints here.
+    const requestFrame = () => {
+      dirty = true;
+      if (loop || frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        draw();
-        syncPills();
+        render();
       });
+    };
+
+    // The continuous loop: particles and the main canvas every tick; the
+    // minimap and the pills only when the view changed, since measuring
+    // every pill is a layout read that a still view does not need.
+    const tick = (now: number) => {
+      loop = requestAnimationFrame(tick);
+      const dt = last ? Math.min((now - last) / 1000, MAX_FRAME_DT) : 0;
+      last = now;
+      time += dt;
+      stepParticles(field, time, dt);
+      paintMap();
+      if (dirty) {
+        dirty = false;
+        paintMinimap();
+        syncPills();
+      }
+    };
+
+    // The loop runs only while there is motion for someone to see: the map
+    // is on screen, the tab is visible, and motion is not reduced. Reduced
+    // motion draws the settled field once and the map stays static.
+    const updateLoop = () => {
+      const run = intersecting && document.visibilityState !== "hidden" && !reduceMotion.matches;
+      if (run && !loop) {
+        if (frame) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+          dirty = true;
+        }
+        last = 0;
+        loop = requestAnimationFrame(tick);
+      } else if (!run && loop) {
+        cancelAnimationFrame(loop);
+        loop = 0;
+        if (dirty) requestFrame();
+      }
     };
 
     const zoom = createMapZoom({
@@ -345,7 +422,7 @@ export function PortfolioMap({ className }: Props) {
       onZoom: (next, gesture) => {
         transform = next;
         if (gesture && !programmatic) interacted = true;
-        scheduleFrame();
+        requestFrame();
       },
     });
     // The behavior lives on the container so wheel and drag over a pill still
@@ -451,8 +528,8 @@ export function PortfolioMap({ className }: Props) {
       minimap.height = Math.round(MINIMAP_SIZE.height * dpr);
       minimap.style.width = `${MINIMAP_SIZE.width}px`;
       minimap.style.height = `${MINIMAP_SIZE.height}px`;
-      // Hidden by the container query on narrow maps; skip its redraws then.
       minimapShown = minimap.offsetWidth > 0;
+      particles.dpr = dpr;
       fit = fitTransform(sim.nodes, size);
       if (!interacted) {
         setTransform(fit, false);
@@ -466,9 +543,20 @@ export function PortfolioMap({ className }: Props) {
 
     controlsRef.current = { focusArea, fitView, syncPills, zoomBy, revealPill };
     resize();
+    updateLoop();
 
     const observer = new ResizeObserver(resize);
     observer.observe(container);
+
+    // Pause the loop while the map is scrolled out of view or the tab is
+    // hidden, and never run it under reduced motion (which can change live).
+    const intersection = new IntersectionObserver(([entry]) => {
+      intersecting = entry.isIntersecting;
+      updateLoop();
+    });
+    intersection.observe(container);
+    document.addEventListener("visibilitychange", updateLoop);
+    reduceMotion.addEventListener("change", updateLoop);
 
     // ResizeObserver does not fire when only devicePixelRatio changes, so
     // watch the matching resolution media query and re-arm it after each change.
@@ -488,6 +576,7 @@ export function PortfolioMap({ className }: Props) {
     // per flip, after the DOM has actually changed, and only the canvases repaint.
     const themeObserver = new MutationObserver(() => {
       palette = readPalette();
+      particles.sprites = buildSprites();
       render();
     });
     themeObserver.observe(document.documentElement, {
@@ -577,7 +666,11 @@ export function PortfolioMap({ className }: Props) {
       canvas.removeEventListener("pointermove", onPointerMove);
       themeObserver.disconnect();
       observer.disconnect();
+      intersection.disconnect();
+      document.removeEventListener("visibilitychange", updateLoop);
+      reduceMotion.removeEventListener("change", updateLoop);
       dprQuery?.removeEventListener("change", onDprChange);
+      if (loop) cancelAnimationFrame(loop);
       if (frame) cancelAnimationFrame(frame);
       selection.interrupt().on(".zoom", null);
       controlsRef.current = null;

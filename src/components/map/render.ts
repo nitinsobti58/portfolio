@@ -1,4 +1,7 @@
+import type { Bounds } from "./fit";
 import type { Palette } from "./palette";
+import type { ParticleField } from "./particles";
+import { spriteLevel } from "./sprites";
 import type { SimLink, SimNode, Size, Transform } from "./types";
 
 /** Halo radius as a multiple of the node radius, for self and area nodes. */
@@ -16,6 +19,14 @@ export const CENTER_LABEL_PAD = 4;
 export type Scene = {
   nodes: readonly SimNode[];
   links: readonly SimLink[];
+};
+
+/** The dust layer: the field plus, per anchor, its sprites as `[tint][level]`. */
+export type ParticleLayer = {
+  field: ParticleField;
+  sprites: readonly (readonly (readonly CanvasImageSource[])[])[];
+  /** Current devicePixelRatio, for picking the sprite level; kept current by the resize path. */
+  dpr: number;
 };
 
 function endpoints(link: SimLink) {
@@ -37,9 +48,35 @@ function nodeColor(node: SimNode, palette: Palette) {
 }
 
 /**
- * Draws one full frame. `ctx` is expected to already be scaled for
- * devicePixelRatio; `size` is in CSS pixels. Flat fills only — no
- * gradients, no shadows, no blend modes.
+ * Draws the particles that fall inside `view` (world units), each as one
+ * `drawImage` of its pre-rendered sprite at its own opacity, at the sprite
+ * level nearest its on-screen size. The context is already in world space
+ * here, so sizes scale with the zoom.
+ */
+export function drawParticles(
+  ctx: CanvasRenderingContext2D,
+  layer: ParticleLayer,
+  view: Bounds,
+  k: number,
+) {
+  const { count, x, y, size, opacity, anchor, tint } = layer.field;
+  const scale = 2 * k * layer.dpr;
+  for (let i = 0; i < count; i++) {
+    const s = size[i];
+    const px = x[i];
+    const py = y[i];
+    if (px + s < view.minX || px - s > view.maxX || py + s < view.minY || py - s > view.maxY) continue;
+    ctx.globalAlpha = opacity[i];
+    ctx.drawImage(layer.sprites[anchor[i]][tint[i]][spriteLevel(s * scale)], px - s, py - s, s * 2, s * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Draws one full frame: links, particles, halos, discs, center label.
+ * `ctx` is expected to already be scaled for devicePixelRatio; `size` is
+ * in CSS pixels. Flat fills only — no gradients, no shadows, no blend
+ * modes; the only softness is baked into the particle sprites.
  */
 export function drawMap(
   ctx: CanvasRenderingContext2D,
@@ -47,6 +84,7 @@ export function drawMap(
   palette: Palette,
   t: Transform,
   size: Size,
+  particles?: ParticleLayer | null,
 ) {
   ctx.clearRect(0, 0, size.width, size.height);
 
@@ -68,6 +106,21 @@ export function drawMap(
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
+
+  // Dust sits above the links and under every node.
+  if (particles) {
+    drawParticles(
+      ctx,
+      particles,
+      {
+        minX: -t.x / t.k,
+        minY: -t.y / t.k,
+        maxX: (size.width - t.x) / t.k,
+        maxY: (size.height - t.y) / t.k,
+      },
+      t.k,
+    );
+  }
 
   // Nodes: halos first so they sit under every solid disc.
   for (const node of scene.nodes) {
