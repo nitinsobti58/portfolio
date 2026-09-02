@@ -156,4 +156,20 @@
   html {
     @apply font-sans;
   }
+  /*
+   * Reduced motion, site-wide. The map already checks this query in JS (no
+   * frame loop, no fly-to); this covers the CSS side: the preview sheet's
+   * slide, the pill fade, the hint. Durations stay non-zero so transition
+   * and animation end events still fire for code that waits on them.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }

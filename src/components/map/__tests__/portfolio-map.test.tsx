@@ -7,6 +7,15 @@ import { PortfolioMap } from "../portfolio-map";
 /** Flip on per test to make fly-to transforms apply synchronously. */
 let reducedMotion = false;
 
+/** Listeners on the reduced-motion query, so a test can flip the preference while the map is mounted. */
+const motionListeners = new Set<() => void>();
+
+/** Changes the reduced-motion preference live, the way the OS setting does. */
+function setReducedMotion(value: boolean) {
+  reducedMotion = value;
+  for (const listener of motionListeners) listener();
+}
+
 /** The map's IntersectionObserver callback, so a test can scroll the map "off screen". */
 let intersectionCallback: ((entries: { isIntersecting: boolean }[]) => void) | null = null;
 
@@ -27,16 +36,26 @@ beforeAll(() => {
     disconnect() {}
   }
   vi.stubGlobal("IntersectionObserver", IntersectionObserverStub);
-  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-    matches: query.includes("prefers-reduced-motion") && reducedMotion,
-    media: query,
-    onchange: null,
-    addEventListener() {},
-    removeEventListener() {},
-    addListener() {},
-    removeListener() {},
-    dispatchEvent: () => false,
-  }));
+  window.matchMedia = vi.fn().mockImplementation((query: string) => {
+    const motion = query.includes("prefers-reduced-motion");
+    return {
+      // A getter, like the real MediaQueryList: the map reads it again on every loop decision.
+      get matches() {
+        return motion && reducedMotion;
+      },
+      media: query,
+      onchange: null,
+      addEventListener(_: string, listener: () => void) {
+        if (motion) motionListeners.add(listener);
+      },
+      removeEventListener(_: string, listener: () => void) {
+        motionListeners.delete(listener);
+      },
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    };
+  });
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never;
   Element.prototype.getBoundingClientRect = () =>
     ({ x: 0, y: 0, top: 0, left: 0, right: 1000, bottom: 600, width: 1000, height: 600 }) as DOMRect;
@@ -45,6 +64,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   reducedMotion = false;
+  motionListeners.clear();
   intersectionCallback = null;
   vi.restoreAllMocks();
 });
@@ -299,3 +319,37 @@ describe("PortfolioMap frame loop", () => {
     expect(raf).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("PortfolioMap reduced motion", () => {
+  it("stops the loop when the preference flips on while mounted, and restarts when it flips back", async () => {
+    render(<PortfolioMap />);
+    expect(await framesIn(120)).toBeGreaterThanOrEqual(3);
+    setReducedMotion(true);
+    await wait(20);
+    expect(await framesIn(120)).toBe(0);
+    setReducedMotion(false);
+    expect(await framesIn(120)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("still focuses an area, at once, and still opens the preview", async () => {
+    reducedMotion = true;
+    render(<PortfolioMap />);
+    const wrapper = mapWrapper();
+    const before = { ...wrapper.__zoom! };
+    fireEvent.click(screen.getByRole("button", { name: "Real Estate" }));
+    // No transition under reduced motion: the focus transform is in place synchronously.
+    expect(wrapper.__zoom!.k).not.toBe(before.k);
+    const pill = screen.getByRole("link", { name: "Sobti Solutions" });
+    expect(pill.style.visibility).toBe("");
+    fireEvent.click(pill);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("unsubscribes from the preference on unmount", () => {
+    const { unmount } = render(<PortfolioMap />);
+    expect(motionListeners.size).toBe(1);
+    unmount();
+    expect(motionListeners.size).toBe(0);
+  });
+});
+
