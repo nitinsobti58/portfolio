@@ -103,16 +103,20 @@ export const projects: Project[] = [
   {
     slug: "sobti-solutions",
     title: "Sobti Solutions",
-    tagline: "Marketing site for a real estate LLC.",
+    tagline:
+      "Brochure site for a family real-estate holding company — brand, build, and a mail-safe launch.",
     description:
-      "The public website for Sobti Solutions, a real estate LLC. Built to be fast, simple to maintain, and easy for clients to navigate.",
+      "The public website for Sobti Solutions LLC, a family real-estate holding company in Ocean County, New Jersey. Brand, build, contact pipeline, and DNS cutover shipped end to end on a domain carrying live email.",
     area: "realestate",
     relatedAreas: ["web"],
-    year: "2025",
+    year: "2026",
     role: "Solo",
-    status: "in-progress",
-    stack: ["Next.js", "TypeScript", "Tailwind CSS"],
-    links: {},
+    status: "live",
+    stack: ["Next.js", "TypeScript", "Tailwind CSS", "Zod", "Nodemailer", "Vitest"],
+    links: {
+      repo: "https://github.com/nitinsobti58/sobtisolutions",
+      live: "https://sobtisolutions.com",
+    },
     order: 3,
   },
   {

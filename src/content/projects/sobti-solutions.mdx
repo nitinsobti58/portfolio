@@ -1,13 +1,16 @@
 ## Overview
 
-{/* TODO: what Sobti Solutions does, and what the site needed to accomplish. */}
+The public site for Sobti Solutions LLC, my family's real-estate holding company in Ocean County, New Jersey. I shipped its web presence end to end — brand, build, deployment, and a DNS cutover on a domain that was already carrying the company's live email. The site's one job is credibility: sellers, agents, lenders, and tenants who look the company up should find something established and real. The bar was quiet professionalism, not flash; this portfolio owns the flash.
 
-The public website for Sobti Solutions, a real estate LLC. The brief was straightforward: fast, easy to maintain without a developer, and simple for clients to navigate.
+## Decisions
 
-## Approach
-
-{/* TODO: how content is managed, how the site is hosted, anything notable about the build. */}
+- **Flat typed data over a CMS.** The property inventory is one TypeScript file. The grid, the homepage strip, and the empty state all derive from it, so adding a property is one entry plus photos — nothing else. Zero infrastructure, content versioned with the site, and a database stays a clean later migration because the typed model is the contract either way.
+- **A working contact form on the mail stack that already existed.** Mail on the domain already ran through Zoho, so the form sends over Zoho SMTP instead of adding a transactional-email vendor — no new DNS records on a mail-carrying domain for zero gain at this volume. The From header is always the authenticated mailbox and the submitter rides in Reply-To, so user input can never break SPF/DKIM/DMARC alignment.
+- **Spam defense without a CAPTCHA.** A CAPTCHA is hostile to a credibility audience. Instead: an off-screen honeypot field, a minimum time-to-submit trap stamped per request on the server, length caps, and a small send throttle so a scripted flood can't burn the mailbox's outbound limits. The mailto fallback stays visible in every form state.
+- **Brand created in-build, no logo spend.** The design concept is a subdivision plat filed with the county clerk: bond-white paper, drafting-ink linework, one bay-teal accent reserved for things you can act on. The signature element is a surveyor's traverse — a closed parcel drawn from real geometry, with bearings and distances derived in code — and each property card gets a parcel sketch seeded from its slug, so the site looks complete before a single photograph exists.
+- **Area-only addresses by default.** Tenants live in these buildings. Street addresses render only behind an explicit per-property opt-in, the guard is unit-tested, and property objects are never spread into markup or structured data where the field could leak.
+- **A launch that couldn't break email.** The cutover touched web records only — the Zoho MX and SPF/DKIM/DMARC records were verified untouched before and after, and mail was tested in both directions before the launch was called done.
 
 ## Stack
 
-Next.js, TypeScript, Tailwind CSS.
+Next.js (App Router), TypeScript, Tailwind CSS, shadcn/ui, Zod, Nodemailer, Vitest. Deployed on Vercel.
