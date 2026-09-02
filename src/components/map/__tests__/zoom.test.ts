@@ -119,3 +119,41 @@ describe("wheelDelta", () => {
     expect(zoom.wheelDelta()).toBe(wheelDelta);
   });
 });
+
+describe("wheelDelta units", () => {
+  it("is odd in deltaY and treats page-mode (deltaMode 2) deltas as whole steps", () => {
+      // Scrolling one way must zoom in exactly as much as scrolling the other way
+      // zooms out, in every delta mode, with and without the Ctrl multiplier, and
+      // never beyond the cap; otherwise a wheel up/down pair would drift the scale.
+      for (const deltaMode of [0, 1, 2]) {
+        for (const ctrlKey of [false, true]) {
+          for (const deltaY of [0.3, 3, 53, 120, 1000]) {
+            const up = wheelDelta({ deltaY: -deltaY, deltaMode, ctrlKey });
+            const down = wheelDelta({ deltaY, deltaMode, ctrlKey });
+            expect(up).toBeGreaterThan(0);
+            expect(down).toBeCloseTo(-up, 12);
+            expect(up).toBeLessThanOrEqual(WHEEL_DELTA_MAX);
+          }
+        }
+      }
+      // deltaMode 2 is pages (Firefox with "scroll a page at a time"): one unit per
+      // page, so a third of a page is a 0.3 step and a whole page still hits the
+      // cap instead of jumping to the scale extent.
+      expect(wheelDelta({ deltaY: -0.3, deltaMode: 2, ctrlKey: false })).toBeCloseTo(0.3);
+      expect(wheelDelta({ deltaY: -1, deltaMode: 2, ctrlKey: false })).toBe(WHEEL_DELTA_MAX);
+      expect(wheelDelta({ deltaY: 0.04, deltaMode: 2, ctrlKey: true })).toBeCloseTo(-0.4);
+    });
+});
+
+describe("zoomFilter touch", () => {
+  it("lets touch gestures through: a touch has no button and needs no modifier", () => {
+      // A tablet in landscape (≥ 768 px) mounts the canvas with `touch-none`, so
+      // d3-zoom owns one-finger pan and two-finger pinch. Touch events carry no
+      // `button` at all (FilterEvent makes it optional for this reason), and only
+      // the wheel rule asks for ⌘/Ctrl — a touch must never be filtered out.
+      const touch = { type: "touchstart", ctrlKey: false, metaKey: false };
+      expect(zoomFilter(touch)).toBe(true);
+      expect(zoomFilter({ ...touch, metaKey: true })).toBe(true);
+      expect(zoomFilter({ ...touch, ctrlKey: true })).toBe(false);
+    });
+});

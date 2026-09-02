@@ -78,3 +78,26 @@ describe("centerOn", () => {
     expect(c.y).toBeCloseTo(300);
   });
 });
+
+describe("minimap click", () => {
+  it("centers the viewport rectangle on the clicked minimap point, at any scale", () => {
+      // A click on the minimap goes minimapToWorld → centerOn → viewportRect
+      // (the same chain the component runs). Whatever the current scale or pan,
+      // the rectangle drawn afterwards must be centered on the point that was
+      // clicked, and its size must be the viewport in minimap pixels, so
+      // minimapToWorld really is the inverse of the minimap transform.
+      const size = { width: 1000, height: 600 };
+      const mm = minimapTransform(bounds);
+      for (const k of [0.5, 1, 2.5, 4]) {
+        for (const [mx, my] of [[20, 15], [90, 60], [170, 110]]) {
+          const w = minimapToWorld(mm, mx, my);
+          const view = centerOn({ k, x: -123, y: 456 }, size, w.x, w.y);
+          const rect = viewportRect(view, size, mm);
+          expect(rect.x + rect.width / 2).toBeCloseTo(mx);
+          expect(rect.y + rect.height / 2).toBeCloseTo(my);
+          expect(rect.width).toBeCloseTo((size.width / k) * mm.k);
+          expect(rect.height).toBeCloseTo((size.height / k) * mm.k);
+        }
+      }
+    });
+});

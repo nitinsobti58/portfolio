@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { buildMapGraph } from "@/data/map";
+import { areas } from "@/data/projects";
+
 import {
   boundsOf,
   clusterOf,
@@ -7,6 +10,7 @@ import {
   drawnRadius,
   fitTransform,
   FOCUS_MAX_SCALE,
+  FOCUS_PADDING,
   focusTransform,
   panToReveal,
   sameTransform,
@@ -14,7 +18,9 @@ import {
   toWorld,
 } from "../fit";
 import { HALO_FACTOR } from "../render";
+import { createSimulation, settle } from "../simulation";
 import type { SimNode } from "../types";
+import { PAN_MARGIN } from "../zoom";
 
 const node = (id: string, x: number, y: number, radius = 10): SimNode => ({
   id,
@@ -215,4 +221,63 @@ describe("fit edge cases", () => {
       expect(s.y).toBeCloseTo(56.7, 9);
     }
   });
+});
+
+describe("focusTransform on the real graph", () => {
+  it("frames every area's cluster inside the padding, centered, without tripping the pan constraint", () => {
+      // The fly-to target behind each area pill, on the real settled graph, at a
+      // laptop viewport and at the narrowest viewport the canvas still mounts at.
+      // For every area the cluster must exist (so focus never silently falls back
+      // to the whole graph), sit fully inside FOCUS_PADDING, be centered, and
+      // already satisfy the pan constraint d3 applies on arrival — otherwise the
+      // fly-to would land somewhere other than where it aimed.
+      const { nodes } = settle(createSimulation(buildMapGraph()));
+      const graphBounds = boundsOf(nodes);
+      for (const size of [{ width: 1280, height: 720 }, { width: 768, height: 480 }]) {
+        for (const area of Object.values(areas)) {
+          const cluster = clusterOf(nodes, area.id);
+          expect(cluster.length).toBeGreaterThan(1);
+          const t = focusTransform(nodes, area.id, size);
+          const b = boundsOf(cluster);
+          const tl = toScreen(t, b.minX, b.minY);
+          const br = toScreen(t, b.maxX, b.maxY);
+          expect(t.k).toBeGreaterThan(0);
+          expect(t.k).toBeLessThanOrEqual(FOCUS_MAX_SCALE);
+          expect(tl.x).toBeGreaterThanOrEqual(FOCUS_PADDING - 1e-6);
+          expect(tl.y).toBeGreaterThanOrEqual(FOCUS_PADDING - 1e-6);
+          expect(br.x).toBeLessThanOrEqual(size.width - FOCUS_PADDING + 1e-6);
+          expect(br.y).toBeLessThanOrEqual(size.height - FOCUS_PADDING + 1e-6);
+          expect((tl.x + br.x) / 2).toBeCloseTo(size.width / 2);
+          expect((tl.y + br.y) / 2).toBeCloseTo(size.height / 2);
+          expect(constrainTransform(t, graphBounds, size, PAN_MARGIN)).toBe(t);
+        }
+      }
+    });
+});
+
+describe("constrainTransform idempotence", () => {
+  it("is idempotent: a constrained transform passes a second pass untouched, at any scale", () => {
+      // d3 runs the constraint on every gesture frame, and createMapZoom relies on
+      // the identity fast path (`c === transform`) to avoid allocating. So once a
+      // transform has been clamped, clamping it again must return the very same
+      // object with the same k — no drift, no fresh allocation.
+      const bounds = { minX: -300, minY: -200, maxX: 300, maxY: 200 };
+      const size = { width: 1000, height: 600 };
+      const margin = 80;
+      const pushed = [
+        { k: 0.5, x: 5000, y: -5000 },
+        { k: 1, x: -5000, y: 5000 },
+        { k: 4, x: 5000, y: 5000 },
+        { k: 2, x: 500, y: 300 },
+      ];
+      for (const t of pushed) {
+        const once = constrainTransform(t, bounds, size, margin);
+        expect(once.k).toBe(t.k);
+        expect(constrainTransform(once, bounds, size, margin)).toBe(once);
+      }
+      // The inverted-range branch settles in the middle and must stay there too.
+      const tiny = { width: 50, height: 50 };
+      const mid = constrainTransform({ k: 0.01, x: 0, y: 0 }, bounds, tiny, margin);
+      expect(constrainTransform(mid, bounds, tiny, margin)).toBe(mid);
+    });
 });
