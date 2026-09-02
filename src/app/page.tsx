@@ -39,9 +39,17 @@ export default function HomePage() {
 
       <MapSection />
 
-      <section className="flex flex-col gap-6">
+      {/*
+        The semantic parallel to the map: a navigation landmark with a link to
+        every project, in the HTML for every viewport, crawler, and screen
+        reader. On mobile it is the whole experience (cards); under the map
+        it steps back to a compact index so the two do not compete.
+      */}
+      <nav aria-labelledby="projects-heading" className="flex flex-col gap-6 md:gap-4">
         <div className="flex items-end justify-between gap-4">
-          <h2 className="text-xl font-medium tracking-tight">Projects</h2>
+          <h2 id="projects-heading" className="text-xl font-medium tracking-tight md:text-lg">
+            Projects
+          </h2>
           <Link
             href="/projects"
             className="text-sm text-muted-foreground hover:text-foreground"
@@ -49,8 +57,8 @@ export default function HomePage() {
             View all
           </Link>
         </div>
-        <ProjectGrid projects={sortedProjects} />
-      </section>
+        <ProjectGrid projects={sortedProjects} compact />
+      </nav>
     </main>
   );
 }
