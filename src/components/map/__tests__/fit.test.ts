@@ -193,3 +193,26 @@ describe("panToReveal", () => {
     expect(huge.y).toBeCloseTo(50 + (24 - 300));
   });
 });
+
+describe("fit edge cases", () => {
+  it("treats a node without a position as sitting at the origin", () => {
+    const unplaced: SimNode = { id: "u", type: "project", label: "u", radius: 5 };
+    expect(boundsOf([unplaced])).toEqual({ minX: -5, minY: -5, maxX: 5, maxY: 5 });
+  });
+
+  it("fits a single node at the scale cap, centered", () => {
+    const only = node("a", 30, -20, 0);
+    const t = fitTransform([only], { width: 400, height: 300 }, 48, 1.25);
+    expect(t.k).toBe(1.25);
+    expect(toScreen(t, 30, -20)).toEqual({ x: 200, y: 150 });
+  });
+
+  it("is a true inverse: screen → world → screen returns the point at any scale", () => {
+    for (const t of [{ k: 0.5, x: -40, y: 12 }, { k: 4, x: 900, y: -300 }]) {
+      const w = toWorld(t, 123.4, 56.7);
+      const s = toScreen(t, w.x, w.y);
+      expect(s.x).toBeCloseTo(123.4, 9);
+      expect(s.y).toBeCloseTo(56.7, 9);
+    }
+  });
+});

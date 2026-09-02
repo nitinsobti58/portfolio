@@ -166,3 +166,29 @@ describe("stepParticles", () => {
     expect(field.x[0]).toBeCloseTo(target, 3);
   });
 });
+
+describe("stepParticles frame-rate independence", () => {
+  it("reaches the same position whether a step is taken at once or in many small pieces", () => {
+    // Toward a fixed target the exponential lerp composes exactly: two steps of dt equal one of 2·dt.
+    const whole = generateParticles(anchors);
+    const pieces = generateParticles(anchors);
+    for (const field of [whole, pieces]) {
+      field.x[0] += 50;
+      field.y[0] -= 30;
+    }
+    stepParticles(whole, 0, 0.5);
+    for (let i = 0; i < 50; i++) stepParticles(pieces, 0, 0.01);
+    expect(pieces.x[0]).toBeCloseTo(whole.x[0], 3);
+    expect(pieces.y[0]).toBeCloseTo(whole.y[0], 3);
+  });
+
+  it("closes a gap by 1 − e^(−dt/τ) per step, so a long pause is a glide rather than a snap", () => {
+    const field = generateParticles(anchors);
+    const target = field.x[0];
+    field.x[0] = target + 100;
+    // A frame of MAX_FRAME_DT (0.1 s) closes about 22 % of the gap; the rest follows over later frames.
+    stepParticles(field, 0, 0.1);
+    expect(field.x[0] - target).toBeCloseTo(100 * Math.exp(-0.1 / LERP_TAU), 3);
+    expect(field.x[0] - target).toBeGreaterThan(70);
+  });
+});

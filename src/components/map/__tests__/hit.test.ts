@@ -75,3 +75,20 @@ describe("hitTest", () => {
     expect(hitRadius(area, 1)).toBeCloseTo(26 * HALO_FACTOR + 4);
   });
 });
+
+describe("hitTest boundaries", () => {
+  const project = node("project:p", "project", 200, 50, 12);
+
+  it("counts a point exactly on the hit radius as a hit", () => {
+    // Radius 12 plus the default 4 px slop at k = 1: the boundary is 16 px out.
+    expect(hitTest([project], IDENTITY, 216, 50)).toBe(project);
+    expect(hitTest([project], IDENTITY, 216.01, 50)).toBeNull();
+  });
+
+  it("shrinks the slop in world units as the map zooms in", () => {
+    // At k = 4 the 4 px slop is 1 world unit; 12 + 1 = 13 units → 52 px on screen from the center.
+    const t = { k: 4, x: 0, y: 0 };
+    expect(hitTest([project], t, 800 + 52, 200)).toBe(project);
+    expect(hitTest([project], t, 800 + 52.5, 200)).toBeNull();
+  });
+});
