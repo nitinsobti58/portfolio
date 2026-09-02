@@ -6,7 +6,7 @@ type Props = {
   projects: Project[];
   /** Accessible name for the list. Leave unset when an ancestor landmark already names it. */
   label?: string;
-  /** Row layout at ≥768px, for a list that sits under the map and must not compete with it. */
+  /** Row layout from the md breakpoint (48rem; 768px at the default font size) up, for a list that sits under the map and must not compete with it. */
   compact?: boolean;
 };
 

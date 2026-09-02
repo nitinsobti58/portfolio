@@ -9,8 +9,8 @@ type Props = {
   project: Project;
   className?: string;
   /**
-   * Below 768px a card; from 768px up a single row (title, tagline, area ·
-   * year) with the stack left out. The homepage uses it under the map, where
+   * Below the md breakpoint (48rem; 768px at the default font size) a card;
+   * from it up a single row (title, tagline, area · year) with the stack left out. The homepage uses it under the map, where
    * the full cards would repeat what the map already shows.
    */
   compact?: boolean;
