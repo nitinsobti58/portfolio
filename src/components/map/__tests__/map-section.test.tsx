@@ -68,7 +68,7 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("MapSection", () => {
   // Order matters: the narrow case must run before anything has loaded the map module.
-  it("below 768px renders nothing and never loads, simulates, spawns particles, or requests a frame", async () => {
+  it("below 768px renders no map and never loads, simulates, spawns particles, or requests a frame", async () => {
     wide = false;
     const raf = vi.spyOn(window, "requestAnimationFrame");
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
@@ -77,7 +77,9 @@ describe("MapSection", () => {
     // A dynamic import would resolve within a few ticks; give it every chance.
     await wait(100);
 
-    expect(container).toBeEmptyDOMElement();
+    // The section and its box are in the HTML (CSS hides them below 768px); the box stays empty.
+    expect(container.querySelector("section > div")).toBeEmptyDOMElement();
+    expect(screen.queryByRole("img")).toBeNull();
     expect(document.querySelector("canvas")).toBeNull();
     expect(mapModule.imported).toBe(false);
     expect(createSimulation).not.toHaveBeenCalled();
